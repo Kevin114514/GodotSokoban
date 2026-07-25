@@ -841,26 +841,22 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	var dx := 0
 	var dy := 0
-	# WASD 随摄像头朝向：W=屏幕上方，A/D=屏幕左右；方向键始终绝对方向
+	# WASD / 方向键都随摄像头朝向：上=屏幕上方，左/右=屏幕左右
 	var fwd := Vector3(-sin(_cam_angle), 0, -cos(_cam_angle))
 	var right := Vector3(cos(_cam_angle), 0, -sin(_cam_angle))
 	match key.keycode:
-		KEY_W:
+		KEY_W, KEY_UP:
 			var gd := _cam_to_grid(fwd)
 			dx = gd.x; dy = gd.y
-		KEY_S:
+		KEY_S, KEY_DOWN:
 			var gd := _cam_to_grid(-fwd)
 			dx = gd.x; dy = gd.y
-		KEY_A:
+		KEY_A, KEY_LEFT:
 			var gd := _cam_to_grid(-right)
 			dx = gd.x; dy = gd.y
-		KEY_D:
+		KEY_D, KEY_RIGHT:
 			var gd := _cam_to_grid(right)
 			dx = gd.x; dy = gd.y
-		KEY_UP:    dy = -1
-		KEY_DOWN:  dy = 1
-		KEY_LEFT:  dx = -1
-		KEY_RIGHT: dx = 1
 		_:
 			return
 

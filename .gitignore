@@ -1,0 +1,22 @@
+# Godot
+.godot/
+*.import
+*.translation
+export/
+*.console
+
+# 用户数据
+user://
+
+# 临时文件
+*.tmp
+*.log
+
+# IDE
+.vs/
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db

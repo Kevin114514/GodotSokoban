@@ -127,7 +127,7 @@ func grid_to_world(col: int, row: int, y: float = 0.0) -> Vector3:
 
 
 func _collect_targets() -> void:
-	if Engine.is_editor_hint(): return
+	if Engine.is_editor_hint() or LEVEL_GRID.is_empty(): return
 	targets.clear()
 	for row in range(GRID_ROWS):
 		for col in range(GRID_COLS):

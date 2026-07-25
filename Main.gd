@@ -462,141 +462,67 @@ func rotate_adjacent_boxes() -> void:
 		_update_objects()
 
 
-func move(dx: int, dy: int) -> void:
-	if won:
-		return
-
-	_save_state()
-
-	var ap = _ap()
-	var new_col: int = ap["col"] + dx
-	var new_row: int = ap["row"] + dy
-	var target_cell := Vector2i(new_col, new_row)
-	if _player_index_at(target_cell, {_active_player: true}) != -1:
-		return
-
-	# 目标格子有箱子 → 尝试推动整个"四联通刚体"箱子
-	var pushed := false
-	var bi := box_index_at(target_cell)
+func _collect_push_cell(cell: Vector2i, step: Vector2i, player_moves: Dictionary, box_moves: Dictionary) -> bool:
+	if not _is_floor(cell):
+		return false
+	var bi := box_index_at(cell)
 	if bi != -1:
-		var step := Vector2i(dx, dy)
-		var can_push := true
-		# 箱子整体平移: 每一个格子都能移入合法空位(或移动到同箱另一格)
-		for c in boxes[bi]:
-			var dest: Vector2i = c + step
-			if not (dest.x >= 0 and dest.x < GRID_COLS \
-					and dest.y >= 0 and dest.y < GRID_ROWS):
-				can_push = false
-				break
-			if LEVEL_GRID[dest.y][dest.x] == 1:
-				can_push = false
-				break
-			# 被另一(不同)箱子或其他玩家占据则推不动
-			var other := box_index_at(dest)
-			if other != -1 and other != bi:
-				can_push = false
-				break
-			if _player_index_at(dest, {_active_player: true}) != -1:
-				can_push = false
-				break
-		if can_push:
-			var moved_cells: Array[Vector2i] = []
-			for c in boxes[bi]:
-				moved_cells.append(c + step)
-			boxes[bi] = moved_cells
-			_rebuild_occ()
-			pushed = true
-
-	# 检查玩家能否进入目标格
-	if not can_move_to(new_col, new_row):
-		return
-
-	# 移动玩家
-	ap["col"] = new_col
-	ap["row"] = new_row
-	ap["facing"] = Vector2i(dx, dy)
-	move_count += 1
-
-	# 检查胜利：所有箱子都在目标点上
-	won = _check_win()
-
-	_update_objects()
-
-	var action := "推动箱子!" if pushed else "移动"
-	print("  [%d] %s → 玩家%d(%d,%d)" % [move_count, action, _active_player + 1, int(ap["col"]), int(ap["row"])])
-	if won:
-		var new_record := ScoreStore.record_win(LEVEL_PATH, move_count)
-		print("\n%s" % "=".repeat(40))
-		print("  恭喜通关! 共 %d 步%s" % [move_count, "（新纪录!）" if new_record else ""])
-		print("  按 R 重新开始 | ESC 返回选关。")
-		print("%s\n" % "=".repeat(40))
-		_update_objects()  # 刷新 HUD 显示纪录信息
+		return _collect_push_box(bi, step, player_moves, box_moves)
+	var pi := _player_index_at(cell)
+	if pi != -1:
+		return _collect_push_player(pi, step, player_moves, box_moves)
+	return true
 
 
-func move_group(dx: int, dy: int) -> void:
-	if won or _players.is_empty():
-		return
+func _collect_push_player(pi: int, step: Vector2i, player_moves: Dictionary, box_moves: Dictionary) -> bool:
+	if player_moves.has(pi):
+		return true
+	player_moves[pi] = true
+	var p = _players[pi]
+	var target := Vector2i(int(p["col"]), int(p["row"])) + step
+	return _collect_push_cell(target, step, player_moves, box_moves)
 
-	_save_state()
-	var step := Vector2i(dx, dy)
-	var selected := {}
-	for i in _players.size():
-		selected[i] = true
 
-	var target_cells := {}
-	var occupied_targets := {}
-	var push_boxes := {}
-	for i in _players.size():
-		var p = _players[i]
-		var from := Vector2i(int(p["col"]), int(p["row"]))
-		var target: Vector2i = from + step
-		if not _is_floor(target):
-			return
-		if occupied_targets.has(target):
-			return
-		if _player_index_at(target, selected) != -1:
-			return
-		occupied_targets[target] = i
-		target_cells[i] = target
-		var bi := box_index_at(target)
-		if bi != -1:
-			push_boxes[bi] = true
+func _collect_push_box(bi: int, step: Vector2i, player_moves: Dictionary, box_moves: Dictionary) -> bool:
+	if box_moves.has(bi):
+		return true
+	box_moves[bi] = true
+	for c in boxes[bi]:
+		var dest: Vector2i = c + step
+		if boxes[bi].has(dest):
+			continue
+		if not _collect_push_cell(dest, step, player_moves, box_moves):
+			return false
+	return true
 
-	var claimed_box_cells := {}
-	for bi in push_boxes.keys():
-		for c in boxes[bi]:
-			var dest: Vector2i = c + step
-			if not _is_floor(dest):
-				return
-			if claimed_box_cells.has(dest):
-				return
-			claimed_box_cells[dest] = bi
-			var other := box_index_at(dest)
-			if other != -1 and other != bi and not push_boxes.has(other):
-				return
-			if occupied_targets.has(dest):
-				return
-			if _player_index_at(dest, selected) != -1:
-				return
 
-	for bi in push_boxes.keys():
+func _build_move_plan(player_idx: int, step: Vector2i) -> Dictionary:
+	var player_moves := {}
+	var box_moves := {}
+	var ok := _collect_push_player(player_idx, step, player_moves, box_moves)
+	return {"ok": ok, "players": player_moves, "boxes": box_moves}
+
+
+func _apply_move_plan(plan: Dictionary, step: Vector2i) -> void:
+	for bi in plan["boxes"].keys():
 		var moved_cells: Array[Vector2i] = []
 		for c in boxes[bi]:
 			moved_cells.append(c + step)
 		boxes[bi] = moved_cells
 	_rebuild_occ()
 
-	for i in _players.size():
-		var target: Vector2i = target_cells[i]
-		var p = _players[i]
-		p["col"] = target.x
-		p["row"] = target.y
+	for pi in plan["players"].keys():
+		var p = _players[pi]
+		p["col"] = int(p["col"]) + step.x
+		p["row"] = int(p["row"]) + step.y
 		p["facing"] = step
 
+
+func _after_successful_move(label: String) -> void:
 	move_count += 1
 	won = _check_win()
 	_update_objects()
-	print("  [%d] 全员移动(%d 人)" % [move_count, _players.size()])
+	print("  [%d] %s" % [move_count, label])
 	if won:
 		var new_record := ScoreStore.record_win(LEVEL_PATH, move_count)
 		print("\n%s" % "=".repeat(40))
@@ -604,6 +530,45 @@ func move_group(dx: int, dy: int) -> void:
 		print("  按 ESC 返回选关。")
 		print("%s\n" % "=".repeat(40))
 		_update_objects()
+
+
+func move(dx: int, dy: int) -> void:
+	if won or _players.is_empty():
+		return
+	var step := Vector2i(dx, dy)
+	var plan := _build_move_plan(_active_player, step)
+	if not bool(plan["ok"]):
+		return
+	_save_state()
+	_apply_move_plan(plan, step)
+	var pushed_count := plan["boxes"].size() + max(0, plan["players"].size() - 1)
+	var action := "推动链(%d)" % pushed_count if pushed_count > 0 else "移动"
+	_after_successful_move("%s → 玩家%d" % [action, _active_player + 1])
+
+
+func move_group(dx: int, dy: int) -> void:
+	if won or _players.is_empty():
+		return
+	var step := Vector2i(dx, dy)
+	var saved := false
+	var acted_players := {}
+	var success_count := 0
+	for i in _players.size():
+		if acted_players.has(i):
+			continue
+		var plan := _build_move_plan(i, step)
+		if not bool(plan["ok"]):
+			continue
+		if not saved:
+			_save_state()
+			saved = true
+		_apply_move_plan(plan, step)
+		for pi in plan["players"].keys():
+			acted_players[pi] = true
+		success_count += 1
+	if success_count == 0:
+		return
+	_after_successful_move("全员操作(%d 人成功)" % success_count)
 
 
 func _check_win() -> bool:

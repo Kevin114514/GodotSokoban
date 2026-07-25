@@ -375,7 +375,7 @@ func rotate_adjacent_boxes() -> void:
 	_save_state()
 
 	var ap = _ap()
-	var center := Vector2i(ap["col"], ap["row"])
+	var center := Vector2i(int(ap["col"]), int(ap["row"]))
 
 	# 1. 找出所有与玩家相邻的箱子索引(去重)。相邻 = 4 邻接(正交)。
 	var rot_indices := {}
@@ -450,8 +450,8 @@ func move(dx: int, dy: int) -> void:
 	_save_state()
 
 	var ap = _ap()
-	var new_col := ap["col"] + dx
-	var new_row := ap["row"] + dy
+	var new_col: int = ap["col"] + dx
+	var new_row: int = ap["row"] + dy
 	var target_cell := Vector2i(new_col, new_row)
 
 	# 目标格子有箱子 → 尝试推动整个"四联通刚体"箱子
@@ -499,7 +499,7 @@ func move(dx: int, dy: int) -> void:
 	_update_objects()
 
 	var action := "推动箱子!" if pushed else "移动"
-	print("  [%d] %s → 玩家%d(%d,%d)" % [move_count, action, _active_player + 1, ap["col"], ap["row"]])
+	print("  [%d] %s → 玩家%d(%d,%d)" % [move_count, action, _active_player + 1, int(ap["col"]), int(ap["row"])])
 	if won:
 		var new_record := ScoreStore.record_win(LEVEL_PATH, move_count)
 		print("\n%s" % "=".repeat(40))
@@ -567,7 +567,7 @@ func _update_objects() -> void:
 	for pi in _players.size():
 		var p = _players[pi]
 		_player_objs[pi].position = grid_to_world(p["col"], p["row"], CELL_SIZE / 2.0)
-		var facing: Vector2i = p["facing"]
+		var facing := p["facing"] as Vector2i
 		var yaw := _facing_to_yaw_for(facing)
 		_player_objs[pi].rotation.y = yaw
 

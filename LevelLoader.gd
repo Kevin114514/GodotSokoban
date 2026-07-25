@@ -120,12 +120,16 @@ static func load_level(path: String) -> Dictionary:
 						cell = 2
 						_add_player_at(player_starts, 0, Vector2i(col, row))
 					_:
-						match _extra_player(ch):
-							[var pi, var on_target]:
-								cell = 2 if on_target else 0
-								_add_player_at(player_starts, pi, Vector2i(col, row))
-							_:
-								cell = 0
+						var extra := _extra_player(ch)
+						if extra.size() == 2:
+							var pi: int = int(extra[0])
+							var on_target: bool = bool(extra[1])
+							cell = 2 if on_target else 0
+							_add_player_at(player_starts, pi, Vector2i(col, row))
+						else:
+							cell = 0
+			grid_row.append(cell)
+		grid.append(grid_row)
 
 	# 组合所有箱子: 单格箱子($/*) + 数字分组箱子(由用户显式用相同数字标出)
 	var cell_boxes: Array = []

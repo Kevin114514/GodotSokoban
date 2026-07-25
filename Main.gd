@@ -555,9 +555,6 @@ func _reset_box_objects() -> void:
 
 
 func _update_objects() -> void:
-	if _player_objs.is_empty():
-		return
-
 	# HUD
 	if _hud_label != null:
 		var head := "[%s]  " % LEVEL_NAME
@@ -568,18 +565,20 @@ func _update_objects() -> void:
 			_hud_label.text = head + "步数: %d | 玩家%d/%d  |  WASD X Z V R ESC" % [move_count, _active_player + 1, _players.size()]
 
 	# 所有玩家位置
-	for pi in _players.size():
-		var p = _players[pi]
-		_player_objs[pi].position = grid_to_world(p["col"], p["row"], CELL_SIZE / 2.0)
-		var facing := p["facing"] as Vector2i
-		var yaw := _facing_to_yaw_for(facing)
-		_player_objs[pi].rotation.y = yaw
+	if not _player_objs.is_empty():
+		for pi in _players.size():
+			var p = _players[pi]
+			_player_objs[pi].position = grid_to_world(p["col"], p["row"], CELL_SIZE / 2.0)
+			var facing := p["facing"] as Vector2i
+			var yaw := _facing_to_yaw_for(facing)
+			_player_objs[pi].rotation.y = yaw
 
-	# 光标跟随活跃玩家
-	var ap = _ap()
-	_cursor_obj.position = grid_to_world(ap["col"], ap["row"], 0.0)
+	# 光标
+	if _cursor_obj != null and not _players.is_empty():
+		var ap = _ap()
+		_cursor_obj.position = grid_to_world(ap["col"], ap["row"], 0.0)
 
-	# 摄像机 (跟随活跃玩家)
+	# 摄像机
 	_update_cam()
 
 	# 箱子位置：重建 (col,row) -> object 映射 (所有箱子格子的集合)

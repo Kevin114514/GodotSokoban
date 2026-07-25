@@ -308,7 +308,7 @@ func _build_scene() -> void:
 
 	# --- 摄像机 ---
 	var span: float = max(GRID_COLS, GRID_ROWS)
-	_tp_pos = Vector3(0, span * 1.15, span * 1.15)
+	_tp_pos = Vector3(0, span * 1.55, span * 0.95)
 	_tp_look = Vector3(0, 0, 0.5)
 	_cam = Camera3D.new()
 	_cam.name = "游戏摄像机"

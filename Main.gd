@@ -6,7 +6,7 @@ extends Node3D
 ## 程序化构建 3D 场景 + 推箱子逻辑。
 ## 关卡从 res://levels/*.txt 动态加载。
 ##
-## 操作：WASD/方向键 移动 | X 旋转箱子 | Z 回退 | V 切换玩家 | G 全员操作 | R 旋转视角 | ESC 返回
+## 操作：WASD/方向键 移动 | X 旋转箱子 | Y 创建分身 | Z 回退 | V 切换玩家 | G 全员操作 | R 旋转视角 | ESC 返回
 ##
 
 # ============================================================
@@ -42,6 +42,7 @@ var LEVEL_PATH: String = ""
 var mat_target: StandardMaterial3D
 var mat_win_target: StandardMaterial3D
 var mat_box: StandardMaterial3D
+var mat_indicator: StandardMaterial3D
 var _player_mats: Array = []
 
 # ============================================================
@@ -85,7 +86,7 @@ func _ready() -> void:
 	reset_game()
 	print("=".repeat(50))
 	print("  推箱子游戏开始! 关卡: %s" % LEVEL_NAME)
-	print("  WASD/方向键 = 移动 | X Z V G R ESC | 人数: %d" % _players.size())
+	print("  WASD/方向键 = 移动 | X Y Z V G R ESC | 人数: %d" % _players.size())
 	print("=".repeat(50))
 
 
@@ -189,6 +190,53 @@ func _add_mesh(mesh: Mesh, mat: Material, pos: Vector3, name := "") -> MeshInsta
 	return mi
 
 
+func _add_player_visual(pi: int, cell: Vector2i) -> void:
+	var pos := grid_to_world(cell.x, cell.y, CELL_SIZE / 2.0)
+	var mat_p := make_material(PLAYER_COLORS[pi % PLAYER_COLORS.size()], 0.3, 0.3)
+	_player_mats.append(mat_p)
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = CELL_SIZE * 0.3
+	cyl.bottom_radius = CELL_SIZE * 0.3
+	cyl.height = CELL_SIZE * 0.8
+	cyl.radial_segments = 16
+	var pobj := _add_mesh(cyl, mat_p, pos, "玩家%d" % pi)
+	var sph := SphereMesh.new()
+	sph.radius = CELL_SIZE * 0.10
+	sph.height = CELL_SIZE * 0.20
+	var indicator := MeshInstance3D.new()
+	indicator.mesh = sph
+	indicator.material_override = mat_indicator
+	indicator.position = Vector3(0, CELL_SIZE * 0.45, CELL_SIZE * -0.15)
+	indicator.name = "方向指示"
+	pobj.add_child(indicator)
+	_player_objs.append(pobj)
+
+	var cursor_mesh := PlaneMesh.new()
+	cursor_mesh.size = Vector2(CELL_SIZE * 0.5, CELL_SIZE * 0.5)
+	var cursor_obj := Node3D.new()
+	var cursor_mi := MeshInstance3D.new()
+	cursor_mi.mesh = cursor_mesh
+	cursor_mi.material_override = mat_indicator
+	cursor_mi.position = Vector3(0, 0.02, 0)
+	cursor_obj.add_child(cursor_mi)
+	cursor_obj.name = "玩家光标%d" % pi
+	add_child(cursor_obj)
+	_cursor_objs.append(cursor_obj)
+
+
+func _sync_player_visuals() -> void:
+	while _player_objs.size() < _players.size():
+		var pi := _player_objs.size()
+		var p = _players[pi]
+		_add_player_visual(pi, Vector2i(int(p["col"]), int(p["row"])))
+	while _player_objs.size() > _players.size():
+		var pobj = _player_objs.pop_back()
+		pobj.queue_free()
+		var cursor = _cursor_objs.pop_back()
+		cursor.queue_free()
+		_player_mats.pop_back()
+
+
 # ============================================================
 # 场景构建
 # ============================================================
@@ -205,7 +253,7 @@ func _build_scene() -> void:
 	mat_box = _noise_mat(Color(0.72, 0.48, 0.30), 0.08, 0.50)
 	mat_win_target = make_material(Color(0.1, 0.1, 0.1), 0.8, 0.0,
 		Color(0.05, 0.95, 0.2), 3.0)
-	var mat_indicator := make_material(Color(0.9, 0.9, 0.9), 0.2)
+	mat_indicator = make_material(Color(0.9, 0.9, 0.9), 0.2)
 
 	# --- 地板 ---
 	var floor_size: float = max(GRID_COLS, GRID_ROWS) * CELL_SIZE * 1.6
@@ -243,44 +291,12 @@ func _build_scene() -> void:
 			var box := _add_mesh(box_mesh, mat_box, pos, "箱子_%d_%d" % [bp.x, bp.y])
 			_box_objs[bp] = box
 
-	# --- 玩家 (不同颜色) ---
+	# --- 玩家与光标（运行时可通过 Y 增加）---
 	_player_objs.clear()
-	for pi in PLAYER_STARTS.size():
-		var ppos := grid_to_world(PLAYER_STARTS[pi].x, PLAYER_STARTS[pi].y, CELL_SIZE / 2.0)
-		var mat_p := make_material(PLAYER_COLORS[pi % PLAYER_COLORS.size()], 0.3, 0.3)
-		_player_mats.append(mat_p)
-		var cyl := CylinderMesh.new()
-		cyl.top_radius = CELL_SIZE * 0.3
-		cyl.bottom_radius = CELL_SIZE * 0.3
-		cyl.height = CELL_SIZE * 0.8
-		cyl.radial_segments = 16
-		var pobj := _add_mesh(cyl, mat_p, ppos, "玩家%d" % pi)
-		# 方向指示球
-		var sph := SphereMesh.new()
-		sph.radius = CELL_SIZE * 0.10
-		sph.height = CELL_SIZE * 0.20
-		var indicator := MeshInstance3D.new()
-		indicator.mesh = sph
-		indicator.material_override = mat_indicator
-		indicator.position = Vector3(0, CELL_SIZE * 0.45, CELL_SIZE * -0.15)
-		indicator.name = "方向指示"
-		pobj.add_child(indicator)
-		_player_objs.append(pobj)
-
-	# --- 光标 (当前玩家 / 全员模式指示) ---
+	_player_mats.clear()
 	_cursor_objs.clear()
 	for pi in PLAYER_STARTS.size():
-		var cursor_mesh := PlaneMesh.new()
-		cursor_mesh.size = Vector2(CELL_SIZE * 0.5, CELL_SIZE * 0.5)
-		var cursor_obj := Node3D.new()
-		var cursor_mi := MeshInstance3D.new()
-		cursor_mi.mesh = cursor_mesh
-		cursor_mi.material_override = mat_indicator
-		cursor_mi.position = Vector3(0, 0.02, 0)
-		cursor_obj.add_child(cursor_mi)
-		cursor_obj.name = "玩家光标%d" % pi
-		add_child(cursor_obj)
-		_cursor_objs.append(cursor_obj)
+		_add_player_visual(pi, PLAYER_STARTS[pi])
 
 	# --- 灯光 ---
 	var sun := DirectionalLight3D.new()
@@ -571,6 +587,27 @@ func move_group(dx: int, dy: int) -> void:
 	_after_successful_move("全员操作(%d 人成功)" % success_count)
 
 
+func create_clone() -> void:
+	if won or _players.is_empty():
+		return
+	var ap = _ap()
+	var facing := ap["facing"] as Vector2i
+	var current := Vector2i(int(ap["col"]), int(ap["row"]))
+	var spawn_cell: Vector2i = current - facing
+	if not _is_floor(spawn_cell):
+		return
+	if is_box_cell(spawn_cell) or _player_index_at(spawn_cell) != -1:
+		return
+
+	_save_state()
+	_players.append({
+		"col": spawn_cell.x,
+		"row": spawn_cell.y,
+		"facing": facing,
+	})
+	_after_successful_move("创建分身 → 玩家%d" % _players.size())
+
+
 func _check_win() -> bool:
 	# 每个目标点上有箱子即通关(不要求所有箱子格都在目标上)
 	for t in targets.keys():
@@ -615,6 +652,7 @@ func _reset_box_objects() -> void:
 
 func _update_objects() -> void:
 	if Engine.is_editor_hint(): return
+	_sync_player_visuals()
 	# HUD
 	if _hud_label != null:
 		var head := "[%s]  " % LEVEL_NAME
@@ -623,7 +661,7 @@ func _update_objects() -> void:
 			_hud_label.text = head + "步数: %d   |   通关! 最短纪录: %d 步   |   V 切换  ESC 返回" % [move_count, best]
 		else:
 			var who := "全员" if _group_mode else "玩家%d/%d" % [_active_player + 1, _players.size()]
-			_hud_label.text = head + "步数: %d | %s  |  WASD X Z V G R ESC" % [move_count, who]
+			_hud_label.text = head + "步数: %d | %s  |  WASD X Y Z V G R ESC" % [move_count, who]
 
 	# 所有玩家位置
 	if not _player_objs.is_empty():
@@ -820,6 +858,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			return
 		_last_move_time = now_x
 		rotate_adjacent_boxes()
+		return
+
+	if key.keycode == KEY_Y:
+		create_clone()
 		return
 
 	if key.keycode == KEY_Z:

@@ -126,8 +126,8 @@ func grid_to_world(col: int, row: int, y: float = 0.0) -> Vector3:
 
 
 func _collect_targets() -> void:
+	if Engine.is_editor_hint(): return
 	targets.clear()
-	if LEVEL_GRID.is_empty(): return
 	for row in range(GRID_ROWS):
 		for col in range(GRID_COLS):
 			if LEVEL_GRID[row][col] == 2:
@@ -191,7 +191,7 @@ func _add_mesh(mesh: Mesh, mat: Material, pos: Vector3, name := "") -> MeshInsta
 # 场景构建
 # ============================================================
 func _build_scene() -> void:
-	if LEVEL_GRID.is_empty():
+	if Engine.is_editor_hint():
 		return
 	print(">>> 构建推箱子游戏场景...")
 

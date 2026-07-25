@@ -136,7 +136,8 @@ func _collect_targets() -> void:
 # ============================================================
 # 玩家状态快捷访问
 # ============================================================
-func _ap() -> Dictionary: return _players[_active_player]
+func _ap() -> Dictionary:
+	return _players[_active_player] if _players.size() > _active_player else {"col": 0, "row": 0, "facing": Vector2i(0, 1)}
 
 
 # ============================================================

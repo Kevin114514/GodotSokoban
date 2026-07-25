@@ -541,7 +541,7 @@ func move(dx: int, dy: int) -> void:
 		return
 	_save_state()
 	_apply_move_plan(plan, step)
-	var pushed_count := plan["boxes"].size() + max(0, plan["players"].size() - 1)
+	var pushed_count: int = (plan["boxes"] as Dictionary).size() + max(0, (plan["players"] as Dictionary).size() - 1)
 	var action := "推动链(%d)" % pushed_count if pushed_count > 0 else "移动"
 	_after_successful_move("%s → 玩家%d" % [action, _active_player + 1])
 

@@ -76,6 +76,7 @@ var _tp_look: Vector3
 
 
 func _ready() -> void:
+	if Engine.is_editor_hint(): return
 	if not _load_selected_level():
 		return
 	_collect_targets()
@@ -556,6 +557,7 @@ func _reset_box_objects() -> void:
 
 
 func _update_objects() -> void:
+	if Engine.is_editor_hint(): return
 	# HUD
 	if _hud_label != null:
 		var head := "[%s]  " % LEVEL_NAME

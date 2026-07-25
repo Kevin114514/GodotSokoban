@@ -314,6 +314,7 @@ func _build_scene() -> void:
 	_cam.fov = 70
 	_cam.current = true
 	add_child(_cam)
+	_update_cam()
 
 	# --- HUD ---
 	var canvas := CanvasLayer.new()

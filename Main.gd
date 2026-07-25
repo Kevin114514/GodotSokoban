@@ -6,7 +6,7 @@ extends Node3D
 ## 程序化构建 3D 场景 + 推箱子逻辑。
 ## 关卡从 res://levels/*.txt 动态加载。
 ##
-## 操作：WASD/方向键 移动 | X 旋转箱子 | Z 回退 | V 切换玩家 | R 旋转视角 | ESC 返回
+## 操作：WASD/方向键 移动 | X 旋转箱子 | Z 回退 | V 切换玩家 | G 全员操作 | R 旋转视角 | ESC 返回
 ##
 
 # ============================================================
@@ -48,7 +48,7 @@ var _player_mats: Array = []
 # 场景对象
 # ============================================================
 var _player_objs: Array = []
-var _cursor_obj: Node3D
+var _cursor_objs: Array = []
 var _box_objs := {}
 var _target_objs := {}
 var _bridge_nodes: Array = []
@@ -59,6 +59,7 @@ var _hud_label: Label
 # ============================================================
 var _players: Array = []        # [{col, row, facing}]
 var _active_player: int = 0
+var _group_mode: bool = false
 var boxes: Array = []
 var _occ: Dictionary = {}
 var targets := {}
@@ -84,7 +85,7 @@ func _ready() -> void:
 	reset_game()
 	print("=".repeat(50))
 	print("  推箱子游戏开始! 关卡: %s" % LEVEL_NAME)
-	print("  WASD/方向键 = 移动 | X Z V R ESC | 人数: %d" % _players.size())
+	print("  WASD/方向键 = 移动 | X Z V G R ESC | 人数: %d" % _players.size())
 	print("=".repeat(50))
 
 
@@ -266,17 +267,20 @@ func _build_scene() -> void:
 		pobj.add_child(indicator)
 		_player_objs.append(pobj)
 
-	# --- 光标 (切换玩家指示) ---
-	var cursor_mesh := PlaneMesh.new()
-	cursor_mesh.size = Vector2(CELL_SIZE * 0.5, CELL_SIZE * 0.5)
-	_cursor_obj = Node3D.new()
-	var cursor_mi := MeshInstance3D.new()
-	cursor_mi.mesh = cursor_mesh
-	cursor_mi.material_override = mat_indicator
-	cursor_mi.position = Vector3(0, 0.02, 0)
-	_cursor_obj.add_child(cursor_mi)
-	_cursor_obj.name = "玩家光标"
-	add_child(_cursor_obj)
+	# --- 光标 (当前玩家 / 全员模式指示) ---
+	_cursor_objs.clear()
+	for pi in PLAYER_STARTS.size():
+		var cursor_mesh := PlaneMesh.new()
+		cursor_mesh.size = Vector2(CELL_SIZE * 0.5, CELL_SIZE * 0.5)
+		var cursor_obj := Node3D.new()
+		var cursor_mi := MeshInstance3D.new()
+		cursor_mi.mesh = cursor_mesh
+		cursor_mi.material_override = mat_indicator
+		cursor_mi.position = Vector3(0, 0.02, 0)
+		cursor_obj.add_child(cursor_mi)
+		cursor_obj.name = "玩家光标%d" % pi
+		add_child(cursor_obj)
+		_cursor_objs.append(cursor_obj)
 
 	# --- 灯光 ---
 	var sun := DirectionalLight3D.new()
@@ -308,7 +312,7 @@ func _build_scene() -> void:
 
 	# --- 摄像机 ---
 	var span: float = max(GRID_COLS, GRID_ROWS)
-	_tp_pos = Vector3(0, span * 1.55, span * 0.95)
+	_tp_pos = Vector3(0, span * 1.75, span * 0.85)
 	_tp_look = Vector3(0, 0, 0.5)
 	_cam = Camera3D.new()
 	_cam.name = "游戏摄像机"
@@ -367,6 +371,15 @@ func is_box_cell(cell: Vector2i) -> bool:
 
 func box_index_at(cell: Vector2i) -> int:
 	return _occ.get(cell, -1)
+
+func _player_index_at(cell: Vector2i, ignore: Dictionary = {}) -> int:
+	for i in _players.size():
+		if ignore.has(i):
+			continue
+		var p = _players[i]
+		if int(p["col"]) == cell.x and int(p["row"]) == cell.y:
+			return i
+	return -1
 
 
 ## X 键机制：把所有"与玩家相邻(4 邻接,正交)的箱子"——包括大箱子——
@@ -459,6 +472,8 @@ func move(dx: int, dy: int) -> void:
 	var new_col: int = ap["col"] + dx
 	var new_row: int = ap["row"] + dy
 	var target_cell := Vector2i(new_col, new_row)
+	if _player_index_at(target_cell, {_active_player: true}) != -1:
+		return
 
 	# 目标格子有箱子 → 尝试推动整个"四联通刚体"箱子
 	var pushed := false
@@ -476,9 +491,12 @@ func move(dx: int, dy: int) -> void:
 			if LEVEL_GRID[dest.y][dest.x] == 1:
 				can_push = false
 				break
-			# 被另一(不同)箱子占据则推不动
+			# 被另一(不同)箱子或其他玩家占据则推不动
 			var other := box_index_at(dest)
 			if other != -1 and other != bi:
+				can_push = false
+				break
+			if _player_index_at(dest, {_active_player: true}) != -1:
 				can_push = false
 				break
 		if can_push:
@@ -515,6 +533,79 @@ func move(dx: int, dy: int) -> void:
 		_update_objects()  # 刷新 HUD 显示纪录信息
 
 
+func move_group(dx: int, dy: int) -> void:
+	if won or _players.is_empty():
+		return
+
+	_save_state()
+	var step := Vector2i(dx, dy)
+	var selected := {}
+	for i in _players.size():
+		selected[i] = true
+
+	var target_cells := {}
+	var occupied_targets := {}
+	var push_boxes := {}
+	for i in _players.size():
+		var p = _players[i]
+		var from := Vector2i(int(p["col"]), int(p["row"]))
+		var target: Vector2i = from + step
+		if not _is_floor(target):
+			return
+		if occupied_targets.has(target):
+			return
+		if _player_index_at(target, selected) != -1:
+			return
+		occupied_targets[target] = i
+		target_cells[i] = target
+		var bi := box_index_at(target)
+		if bi != -1:
+			push_boxes[bi] = true
+
+	var claimed_box_cells := {}
+	for bi in push_boxes.keys():
+		for c in boxes[bi]:
+			var dest: Vector2i = c + step
+			if not _is_floor(dest):
+				return
+			if claimed_box_cells.has(dest):
+				return
+			claimed_box_cells[dest] = bi
+			var other := box_index_at(dest)
+			if other != -1 and other != bi and not push_boxes.has(other):
+				return
+			if occupied_targets.has(dest):
+				return
+			if _player_index_at(dest, selected) != -1:
+				return
+
+	for bi in push_boxes.keys():
+		var moved_cells: Array[Vector2i] = []
+		for c in boxes[bi]:
+			moved_cells.append(c + step)
+		boxes[bi] = moved_cells
+	_rebuild_occ()
+
+	for i in _players.size():
+		var target: Vector2i = target_cells[i]
+		var p = _players[i]
+		p["col"] = target.x
+		p["row"] = target.y
+		p["facing"] = step
+
+	move_count += 1
+	won = _check_win()
+	_update_objects()
+	print("  [%d] 全员移动(%d 人)" % [move_count, _players.size()])
+	if won:
+		var new_record := ScoreStore.record_win(LEVEL_PATH, move_count)
+		print("\n%s" % "=".repeat(40))
+		print("  恭喜通关! 共 %d 步%s" % [move_count, "（新纪录!）" if new_record else ""])
+		print("  按 ESC 返回选关。")
+		print("%s\n" % "=".repeat(40))
+		_update_objects()
+
+
 func _check_win() -> bool:
 	# 每个目标点上有箱子即通关(不要求所有箱子格都在目标上)
 	for t in targets.keys():
@@ -526,6 +617,7 @@ func _check_win() -> bool:
 func reset_game() -> void:
 	_players.clear()
 	_active_player = 0
+	_group_mode = false
 	for ps in PLAYER_STARTS:
 		_players.append({"col": ps.x, "row": ps.y, "facing": Vector2i(0, 1)})
 	boxes.clear()
@@ -565,7 +657,8 @@ func _update_objects() -> void:
 			var best := ScoreStore.get_best(LEVEL_PATH)
 			_hud_label.text = head + "步数: %d   |   通关! 最短纪录: %d 步   |   V 切换  ESC 返回" % [move_count, best]
 		else:
-			_hud_label.text = head + "步数: %d | 玩家%d/%d  |  WASD X Z V R ESC" % [move_count, _active_player + 1, _players.size()]
+			var who := "全员" if _group_mode else "玩家%d/%d" % [_active_player + 1, _players.size()]
+			_hud_label.text = head + "步数: %d | %s  |  WASD X Z V G R ESC" % [move_count, who]
 
 	# 所有玩家位置
 	if not _player_objs.is_empty():
@@ -577,9 +670,13 @@ func _update_objects() -> void:
 			_player_objs[pi].rotation.y = yaw
 
 	# 光标
-	if _cursor_obj != null and not _players.is_empty():
-		var ap = _ap()
-		_cursor_obj.position = grid_to_world(ap["col"], ap["row"], 0.0)
+	for ci in _cursor_objs.size():
+		var cursor = _cursor_objs[ci]
+		var visible := _group_mode or ci == _active_player
+		cursor.visible = visible
+		if visible and ci < _players.size():
+			var cp = _players[ci]
+			cursor.position = grid_to_world(int(cp["col"]), int(cp["row"]), 0.0)
 
 	# 摄像机
 	_update_cam()
@@ -694,6 +791,7 @@ func _save_state() -> void:
 		"boxes": boxes_copy,
 		"moves": move_count,
 		"active": _active_player,
+		"group": _group_mode,
 	})
 
 
@@ -704,6 +802,7 @@ func _undo() -> void:
 	var s = _undo_stack.pop_back()
 	_players = s["players"]
 	_active_player = s["active"]
+	_group_mode = s.get("group", false)
 	boxes = s["boxes"]
 	move_count = s["moves"]
 	won = false
@@ -744,7 +843,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		print("  [R] 旋转视角")
 		return
 
+	if _players.is_empty():
+		return
+
 	if key.keycode == KEY_X:
+		if _group_mode:
+			print("  [X] 全员模式暂不支持同时旋转，请按 G 回到单人模式")
+			return
 		var now_x := Time.get_ticks_msec() / 1000.0
 		if now_x - _last_move_time < 0.08:
 			return
@@ -757,9 +862,16 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 
 	if key.keycode == KEY_V:
+		_group_mode = false
 		_active_player = (_active_player + 1) % _players.size()
 		_update_objects()
 		print("  [V] 切换到玩家%d" % (_active_player + 1))
+		return
+
+	if key.keycode == KEY_G:
+		_group_mode = not _group_mode
+		_update_objects()
+		print("  [G] %s" % ("全员操作" if _group_mode else "单人操作"))
 		return
 
 	var dx := 0
@@ -793,4 +905,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	_last_move_time = now
 
-	move(dx, dy)
+	if _group_mode:
+		move_group(dx, dy)
+	else:
+		move(dx, dy)

@@ -191,6 +191,8 @@ func _add_mesh(mesh: Mesh, mat: Material, pos: Vector3, name := "") -> MeshInsta
 # 场景构建
 # ============================================================
 func _build_scene() -> void:
+	if LEVEL_GRID.is_empty():
+		return
 	print(">>> 构建推箱子游戏场景...")
 
 	# --- 材质 ---

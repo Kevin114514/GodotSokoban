@@ -618,6 +618,7 @@ func _update_objects() -> void:
 
 ## 为所有多格箱子在相邻格子间创建桥接长方体，填平 0.92 → 1.0 的缝隙。
 func _rebuild_bridges() -> void:
+	if boxes.is_empty(): return
 	for node in _bridge_nodes:
 		node.queue_free()
 	_bridge_nodes.clear()
@@ -725,6 +726,8 @@ func _update_cam() -> void:
 # 输入处理
 # ============================================================
 func _unhandled_input(event: InputEvent) -> void:
+	if Engine.is_editor_hint():
+		return
 	# --- 键盘事件: 游戏操作 ---
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return

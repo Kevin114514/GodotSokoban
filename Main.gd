@@ -6,8 +6,7 @@ extends Node3D
 ## 程序化构建 3D 场景 + 推箱子逻辑。
 ## 关卡从 res://levels/*.txt 动态加载。
 ##
-## 操作：WASD / 方向键 移动 | X 旋转箱子 | Z 回退 | R 旋转视角 | ESC 返回
-## 将箱子推到绿色目标点上即可通关。
+## 操作：WASD/方向键 移动 | X 旋转箱子 | Z 回退 | V 切换玩家 | R 旋转视角 | ESC 返回
 ##
 
 # ============================================================
@@ -15,15 +14,25 @@ extends Node3D
 # ============================================================
 const CELL_SIZE: float = 1.0
 const SELECT_SCENE := "res://LevelSelect.tscn"
+const PLAYER_COLORS := [
+	Color(0.15, 0.45, 0.85),
+	Color(0.85, 0.20, 0.20),
+	Color(0.20, 0.80, 0.30),
+	Color(0.85, 0.75, 0.15),
+	Color(0.60, 0.25, 0.75),
+	Color(0.15, 0.70, 0.70),
+	Color(0.90, 0.50, 0.10),
+	Color(0.55, 0.35, 0.70),
+]
 
 # ============================================================
-# 关卡数据（运行时从 txt 加载）
+# 关卡数据
 # ============================================================
 var GRID_COLS: int = 8
 var GRID_ROWS: int = 8
 var LEVEL_GRID: Array = []
-var BOX_POSITIONS: Array = []      # Array[Array[Vector2i]]  (每个元素 = 一个箱子的所有格子)
-var PLAYER_START := Vector2i(0, 0)
+var BOX_POSITIONS: Array = []
+var PLAYER_STARTS: Array = []
 var LEVEL_NAME: String = ""
 var LEVEL_PATH: String = ""
 
@@ -33,36 +42,37 @@ var LEVEL_PATH: String = ""
 var mat_target: StandardMaterial3D
 var mat_win_target: StandardMaterial3D
 var mat_box: StandardMaterial3D
+var _player_mats: Array = []
 
 # ============================================================
-# 场景对象引用
+# 场景对象
 # ============================================================
-var _player_obj: Node3D
-var _box_objs := {}       # Vector2i -> MeshInstance3D
-var _target_objs := {}    # Vector2i -> MeshInstance3D
-var _bridge_nodes: Array = []  # 多格箱子之间的桥接长方体
+var _player_objs: Array = []
+var _cursor_obj: Node3D
+var _box_objs := {}
+var _target_objs := {}
+var _bridge_nodes: Array = []
 var _hud_label: Label
 
 # ============================================================
 # 游戏状态
 # ============================================================
-var player_col: int
-var player_row: int
-var player_facing := Vector2i(0, 1)
-var boxes: Array = []           # Array[Array[Vector2i]]  每个箱子 = 若干格子的绝对坐标列表
-var _occ: Dictionary = {}       # Vector2i -> int  箱子格子 → 所属箱子索引，移动后重建
-var targets := {}         # 用作 set: Vector2i -> true
+var _players: Array = []        # [{col, row, facing}]
+var _active_player: int = 0
+var boxes: Array = []
+var _occ: Dictionary = {}
+var targets := {}
 var move_count: int = 0
 var won: bool = false
 
 var _last_move_time: float = 0.0
-var _undo_stack: Array = []  # 回退栈: Array[Dictionary]
+var _undo_stack: Array = []
 
-# 摄像机 (固定俯视，R 键旋转)
+# 摄像机
 var _cam: Camera3D
-var _cam_angle: float = 0.0   # 当前旋转角度 (弧度)
-var _tp_pos: Vector3          # 基础位置
-var _tp_look: Vector3         # 注视点
+var _cam_angle: float = 0.0
+var _tp_pos: Vector3
+var _tp_look: Vector3
 
 
 func _ready() -> void:
@@ -73,8 +83,7 @@ func _ready() -> void:
 	reset_game()
 	print("=".repeat(50))
 	print("  推箱子游戏开始! 关卡: %s" % LEVEL_NAME)
-	print("  WASD/方向键 = 移动 | X 旋转箱子 | Z 回退 | R 旋转视角 | ESC 返回")
-	print("  将箱子推到绿色目标点上即可通关!")
+	print("  WASD/方向键 = 移动 | X Z V R ESC | 人数: %d" % _players.size())
 	print("=".repeat(50))
 
 
@@ -102,7 +111,7 @@ func _load_selected_level() -> bool:
 	GRID_COLS = data.cols
 	GRID_ROWS = data.rows
 	BOX_POSITIONS = data.boxes
-	PLAYER_START = data.player_start
+	PLAYER_STARTS = data.player_starts
 	return true
 
 
@@ -122,6 +131,12 @@ func _collect_targets() -> void:
 		for col in range(GRID_COLS):
 			if LEVEL_GRID[row][col] == 2:
 				targets[Vector2i(col, row)] = true
+
+
+# ============================================================
+# 玩家状态快捷访问
+# ============================================================
+func _ap() -> Dictionary: return _players[_active_player]
 
 
 # ============================================================
@@ -182,7 +197,6 @@ func _build_scene() -> void:
 	mat_target = make_material(Color(0.15, 0.15, 0.15), 0.8, 0.0,
 		Color(0.1, 0.9, 0.3), 1.5)
 	mat_box = _noise_mat(Color(0.72, 0.48, 0.30), 0.08, 0.50)
-	var mat_player := make_material(Color(0.15, 0.45, 0.85), 0.3, 0.3)
 	mat_win_target = make_material(Color(0.1, 0.1, 0.1), 0.8, 0.0,
 		Color(0.05, 0.95, 0.2), 3.0)
 	var mat_indicator := make_material(Color(0.9, 0.9, 0.9), 0.2)
@@ -223,25 +237,41 @@ func _build_scene() -> void:
 			var box := _add_mesh(box_mesh, mat_box, pos, "箱子_%d_%d" % [bp.x, bp.y])
 			_box_objs[bp] = box
 
-	# --- 玩家 ---
-	var player_pos := grid_to_world(PLAYER_START.x, PLAYER_START.y, CELL_SIZE / 2.0)
-	var cyl := CylinderMesh.new()
-	cyl.top_radius = CELL_SIZE * 0.3
-	cyl.bottom_radius = CELL_SIZE * 0.3
-	cyl.height = CELL_SIZE * 0.8
-	cyl.radial_segments = 16
-	_player_obj = _add_mesh(cyl, mat_player, player_pos, "玩家")
+	# --- 玩家 (不同颜色) ---
+	_player_objs.clear()
+	for pi in PLAYER_STARTS.size():
+		var ppos := grid_to_world(PLAYER_STARTS[pi].x, PLAYER_STARTS[pi].y, CELL_SIZE / 2.0)
+		var mat_p := make_material(PLAYER_COLORS[pi % PLAYER_COLORS.size()], 0.3, 0.3)
+		_player_mats.append(mat_p)
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = CELL_SIZE * 0.3
+		cyl.bottom_radius = CELL_SIZE * 0.3
+		cyl.height = CELL_SIZE * 0.8
+		cyl.radial_segments = 16
+		var pobj := _add_mesh(cyl, mat_p, ppos, "玩家%d" % pi)
+		# 方向指示球
+		var sph := SphereMesh.new()
+		sph.radius = CELL_SIZE * 0.10
+		sph.height = CELL_SIZE * 0.20
+		var indicator := MeshInstance3D.new()
+		indicator.mesh = sph
+		indicator.material_override = mat_indicator
+		indicator.position = Vector3(0, CELL_SIZE * 0.45, CELL_SIZE * -0.15)
+		indicator.name = "方向指示"
+		pobj.add_child(indicator)
+		_player_objs.append(pobj)
 
-	# 玩家头顶方向指示球
-	var sph := SphereMesh.new()
-	sph.radius = CELL_SIZE * 0.12
-	sph.height = CELL_SIZE * 0.24
-	var indicator := MeshInstance3D.new()
-	indicator.mesh = sph
-	indicator.material_override = mat_indicator
-	indicator.position = Vector3(0, CELL_SIZE * 0.45, CELL_SIZE * -0.18)
-	indicator.name = "玩家方向指示"
-	_player_obj.add_child(indicator)
+	# --- 光标 (切换玩家指示) ---
+	var cursor_mesh := PlaneMesh.new()
+	cursor_mesh.size = Vector2(CELL_SIZE * 0.5, CELL_SIZE * 0.5)
+	_cursor_obj = Node3D.new()
+	var cursor_mi := MeshInstance3D.new()
+	cursor_mi.mesh = cursor_mesh
+	cursor_mi.material_override = mat_indicator
+	cursor_mi.position = Vector3(0, 0.02, 0)
+	_cursor_obj.add_child(cursor_mi)
+	_cursor_obj.name = "玩家光标"
+	add_child(_cursor_obj)
 
 	# --- 灯光 ---
 	var sun := DirectionalLight3D.new()
@@ -344,7 +374,8 @@ func rotate_adjacent_boxes() -> void:
 
 	_save_state()
 
-	var center := Vector2i(player_col, player_row)
+	var ap = _ap()
+	var center := Vector2i(ap["col"], ap["row"])
 
 	# 1. 找出所有与玩家相邻的箱子索引(去重)。相邻 = 4 邻接(正交)。
 	var rot_indices := {}
@@ -418,8 +449,9 @@ func move(dx: int, dy: int) -> void:
 
 	_save_state()
 
-	var new_col := player_col + dx
-	var new_row := player_row + dy
+	var ap = _ap()
+	var new_col := ap["col"] + dx
+	var new_row := ap["row"] + dy
 	var target_cell := Vector2i(new_col, new_row)
 
 	# 目标格子有箱子 → 尝试推动整个"四联通刚体"箱子
@@ -456,9 +488,9 @@ func move(dx: int, dy: int) -> void:
 		return
 
 	# 移动玩家
-	player_col = new_col
-	player_row = new_row
-	player_facing = Vector2i(dx, dy)
+	ap["col"] = new_col
+	ap["row"] = new_row
+	ap["facing"] = Vector2i(dx, dy)
 	move_count += 1
 
 	# 检查胜利：所有箱子都在目标点上
@@ -467,7 +499,7 @@ func move(dx: int, dy: int) -> void:
 	_update_objects()
 
 	var action := "推动箱子!" if pushed else "移动"
-	print("  [%d] %s → 玩家(%d,%d)" % [move_count, action, player_col, player_row])
+	print("  [%d] %s → 玩家%d(%d,%d)" % [move_count, action, _active_player + 1, ap["col"], ap["row"]])
 	if won:
 		var new_record := ScoreStore.record_win(LEVEL_PATH, move_count)
 		print("\n%s" % "=".repeat(40))
@@ -486,9 +518,10 @@ func _check_win() -> bool:
 
 
 func reset_game() -> void:
-	player_col = PLAYER_START.x
-	player_row = PLAYER_START.y
-	player_facing = Vector2i(0, 1)
+	_players.clear()
+	_active_player = 0
+	for ps in PLAYER_STARTS:
+		_players.append({"col": ps.x, "row": ps.y, "facing": Vector2i(0, 1)})
 	boxes.clear()
 	for b in BOX_POSITIONS:
 		boxes.append(b.duplicate())
@@ -518,7 +551,7 @@ func _reset_box_objects() -> void:
 
 
 func _update_objects() -> void:
-	if _player_obj == null:
+	if _player_objs.is_empty():
 		return
 
 	# HUD
@@ -526,15 +559,23 @@ func _update_objects() -> void:
 		var head := "[%s]  " % LEVEL_NAME
 		if won:
 			var best := ScoreStore.get_best(LEVEL_PATH)
-			_hud_label.text = head + "步数: %d   |   通关! 最短纪录: %d 步   |   R 重开  ESC 返回选关" % [move_count, best]
+			_hud_label.text = head + "步数: %d   |   通关! 最短纪录: %d 步   |   V 切换  ESC 返回" % [move_count, best]
 		else:
-			_hud_label.text = head + "步数: %d   |   WASD 移动  X 旋转  R 重开  ESC 返回选关" % move_count
+			_hud_label.text = head + "步数: %d | 玩家%d/%d  |  WASD X Z V R ESC" % [move_count, _active_player + 1, _players.size()]
 
-	# 玩家位置
-	_player_obj.position = grid_to_world(player_col, player_row, CELL_SIZE / 2.0)
-	_player_obj.rotation.y = _facing_to_yaw()
+	# 所有玩家位置
+	for pi in _players.size():
+		var p = _players[pi]
+		_player_objs[pi].position = grid_to_world(p["col"], p["row"], CELL_SIZE / 2.0)
+		var facing: Vector2i = p["facing"]
+		var yaw := _facing_to_yaw_for(facing)
+		_player_objs[pi].rotation.y = yaw
 
-	# 摄像机
+	# 光标跟随活跃玩家
+	var ap = _ap()
+	_cursor_obj.position = grid_to_world(ap["col"], ap["row"], 0.0)
+
+	# 摄像机 (跟随活跃玩家)
 	_update_cam()
 
 	# 箱子位置：重建 (col,row) -> object 映射 (所有箱子格子的集合)
@@ -609,9 +650,9 @@ func _rebuild_bridges() -> void:
 				_bridge_nodes.append(node)
 
 
-## player_facing → 世界 Y 旋转角 (弧度)，0 朝 -Z (上)，PI/2 朝 +X (右)。
-func _facing_to_yaw() -> float:
-	match player_facing:
+## 网格方向 → Y 旋转角。
+func _facing_to_yaw_for(facing: Vector2i) -> float:
+	match facing:
 		Vector2i(0, -1): return 0.0
 		Vector2i(1, 0):  return PI / 2.0
 		Vector2i(0, 1):  return PI
@@ -638,12 +679,14 @@ func _save_state() -> void:
 	var boxes_copy := []
 	for b in boxes:
 		boxes_copy.append(b.duplicate())
+	var players_copy := []
+	for p in _players:
+		players_copy.append(p.duplicate())
 	_undo_stack.append({
-		"col": player_col,
-		"row": player_row,
-		"facing": player_facing,
+		"players": players_copy,
 		"boxes": boxes_copy,
 		"moves": move_count,
+		"active": _active_player,
 	})
 
 
@@ -652,9 +695,8 @@ func _undo() -> void:
 	if _undo_stack.is_empty():
 		return
 	var s = _undo_stack.pop_back()
-	player_col = s["col"]
-	player_row = s["row"]
-	player_facing = s["facing"]
+	_players = s["players"]
+	_active_player = s["active"]
 	boxes = s["boxes"]
 	move_count = s["moves"]
 	won = false
@@ -703,6 +745,12 @@ func _unhandled_input(event: InputEvent) -> void:
 
 	if key.keycode == KEY_Z:
 		_undo()
+		return
+
+	if key.keycode == KEY_V:
+		_active_player = (_active_player + 1) % _players.size()
+		_update_objects()
+		print("  [V] 切换到玩家%d" % (_active_player + 1))
 		return
 
 	var dx := 0

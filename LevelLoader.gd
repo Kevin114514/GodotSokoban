@@ -9,13 +9,13 @@ extends RefCounted
 ##   #  墙
 ##   (空格) 地板
 ##   .  目标点
-##   $  单个箱子(1x1)，每个 $ 各自独立，不会与相邻箱子合并
+##   $  单个箱子(1x1)，每个 $ 各自独立
 ##   *  单个箱子(1x1)且已在目标点上
-##   1-9,0  多格箱子: 相同数字的所有格子属于"同一个箱子"(由你显式分组，无需四联通)
-##   @  玩家
-##   +  玩家在目标点上
+##   1-9,0  多格箱子: 相同数字归为同一个箱子
+##   @  玩家0 (起点，可有多个)    +  玩家0 在目标点上
+##   a  玩家1 起点              A  玩家1 在目标点上
+##   b  玩家2 起点              B  玩家2 在目标点上   …依此类推至 z/Z
 ## 以 ; 开头的行为关卡名/注释，第一条注释作为关卡显示名。
-## 提示: 一个箱子可以是任意形状的格子集合，只要用相同数字标出即可。
 ##
 
 const LEVELS_DIR := "res://levels"
@@ -30,7 +30,7 @@ static var selected_level_path: String = ""
 ##   "grid": Array[Array[int]],   # 0=地板 1=墙 2=目标点
 ##   "cols": int, "rows": int,
 ##   "boxes": Array[Array[Vector2i]],   # 每个元素 = 一个箱子的所有格子
-##   "player_start": Vector2i,
+##   "player_starts": Array[Vector2i],  # 玩家起点列表，索引0=@, 1=a, 2=b…
 ##   "ok": bool, "error": String,
 ## }
 static func load_level(path: String) -> Dictionary:
@@ -40,7 +40,7 @@ static func load_level(path: String) -> Dictionary:
 		"cols": 0,
 		"rows": 0,
 		"boxes": [],
-		"player_start": Vector2i(-1, -1),
+		"player_starts": [],
 		"ok": false,
 		"error": "",
 	}
@@ -85,7 +85,7 @@ static func load_level(path: String) -> Dictionary:
 	var grid: Array = []
 	var single_boxes: Array = []      # 每个 $/* 各自一个 1x1 箱子
 	var digit_groups: Dictionary = {}  # 数字 -> 该数字标记的箱子格子列表
-	var player_start := Vector2i(-1, -1)
+	var player_starts: Array = []     # Array[Vector2i], 索引0=@,1=a,2=b…
 
 	for row in range(rows):
 		var line: String = raw_lines[row]
@@ -96,7 +96,6 @@ static func load_level(path: String) -> Dictionary:
 				ch = line[col]
 			var cell := 0  # 默认地板
 			if ch >= "0" and ch <= "9":
-				# 多格箱子: 相同数字归为同一个箱子(由用户显式分组，无需四联通)
 				cell = 0
 				var d := ch.to_int()
 				if not digit_groups.has(d):
@@ -116,14 +115,17 @@ static func load_level(path: String) -> Dictionary:
 						single_boxes.append([Vector2i(col, row)])
 					"@":
 						cell = 0
-						player_start = Vector2i(col, row)
+						_add_player_at(player_starts, 0, Vector2i(col, row))
 					"+":
 						cell = 2
-						player_start = Vector2i(col, row)
+						_add_player_at(player_starts, 0, Vector2i(col, row))
 					_:
-						cell = 0
-			grid_row.append(cell)
-		grid.append(grid_row)
+						match _extra_player(ch):
+							[var pi, var on_target]:
+								cell = 2 if on_target else 0
+								_add_player_at(player_starts, pi, Vector2i(col, row))
+							_:
+								cell = 0
 
 	# 组合所有箱子: 单格箱子($/*) + 数字分组箱子(由用户显式用相同数字标出)
 	var cell_boxes: Array = []
@@ -132,7 +134,7 @@ static func load_level(path: String) -> Dictionary:
 	for d in digit_groups.keys():
 		cell_boxes.append(digit_groups[d])
 
-	if player_start == Vector2i(-1, -1):
+	if player_starts.is_empty():
 		result.error = "关卡缺少玩家起点 (@)"
 		return result
 
@@ -140,9 +142,25 @@ static func load_level(path: String) -> Dictionary:
 	result.cols = cols
 	result.rows = rows
 	result.boxes = cell_boxes
-	result.player_start = player_start
+	result.player_starts = player_starts
 	result.ok = true
 	return result
+
+
+## 解析额外玩家字符: a=1, A=1且目标上, b=2, B=2目标上… 返回 [玩家索引, 是否在目标上]; 非玩家字符返回 null。
+static func _extra_player(ch: String) -> Array:
+	if ch >= "a" and ch <= "z":
+		return [ch.unicode_at(0) - "a".unicode_at(0) + 1, false]
+	if ch >= "A" and ch <= "Z":
+		return [ch.unicode_at(0) - "A".unicode_at(0) + 1, true]
+	return []
+
+
+## 确保玩家索引位置存在后存入。保证数组连续(插空位)。
+static func _add_player_at(arr: Array, idx: int, pos: Vector2i) -> void:
+	while arr.size() <= idx:
+		arr.append(Vector2i.ZERO)
+	arr[idx] = pos
 
 
 ## 列出 levels 目录下所有关卡文件路径（按文件名排序）。
